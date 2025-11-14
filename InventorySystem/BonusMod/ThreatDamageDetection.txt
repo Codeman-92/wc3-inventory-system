@@ -41,23 +41,27 @@ endfunction
 // Get attack power bonus from unit stats (strength/agility/intelligence)
 private function GetUnitAttackPowerBonus takes unit u returns real
     local real bonus = 0.0
-    local integer primaryAttr
+    local integer str
+    local integer agi
+    local integer int
     
     if IsUnitType(u, UNIT_TYPE_HERO) then
-        // Get primary attribute for the hero
-        set primaryAttr = BlzGetUnitIntegerField(u, UNIT_IF_PRIMARY_ATTRIBUTE)
+        set str = GetHeroStr(u, true)
+        set agi = GetHeroAgi(u, true)
+        set int = GetHeroInt(u, true)
         
-        // Add damage bonus based on primary attribute
-        // In WC3: Strength heroes get +1 damage per STR, Agility per AGI, Intelligence per INT
-        if primaryAttr == 1 then
+        // Determine primary attribute by finding the highest stat
+        // This assumes the primary attribute will typically be the highest
+        // Alternatively, could use unit type to determine primary attribute
+        if str >= agi and str >= int then
             // Strength primary
-            set bonus = GetHeroStr(u, true)
-        elseif primaryAttr == 2 then
+            set bonus = str
+        elseif agi >= str and agi >= int then
             // Agility primary
-            set bonus = GetHeroAgi(u, true)
-        elseif primaryAttr == 3 then
+            set bonus = agi
+        else
             // Intelligence primary
-            set bonus = GetHeroInt(u, true)
+            set bonus = int
         endif
     endif
     
@@ -72,7 +76,7 @@ private function GetExpectedDamage takes unit u returns real
 endfunction
 
 // Display floating text for critical hit
-private function ShowCriticalHitText takes unit target, real damage returns nothing
+private function ShowCriticalHitText takes unit source, unit target, real damage returns nothing
     local texttag tt = CreateTextTag()
     local string damageText = I2S(R2I(damage)) + "!"
     
@@ -85,8 +89,8 @@ private function ShowCriticalHitText takes unit target, real damage returns noth
         call SetTextTagLifespan(tt, 2.0)
         call SetTextTagFadepoint(tt, 1.0)
         
-        // Only show to local player for performance
-        if GetLocalPlayer() == GetOwningPlayer(target) then
+        // Show to the attacking player who scored the crit
+        if GetLocalPlayer() == GetOwningPlayer(source) then
             call SetTextTagVisibility(tt, true)
         else
             call SetTextTagVisibility(tt, false)
@@ -152,8 +156,9 @@ private function ThreatDamagedEvent takes nothing returns nothing
     local real critThreshold
     local boolean isCrit = false
     
-    // Only process attack damage, not spell damage
-    if BlzGetEventDamageType() == DAMAGE_TYPE_NORMAL then
+    // Only process physical attack damage, not spell damage
+    // Check attack type instead of damage type to properly identify physical attacks
+    if BlzGetEventAttackType() != ATTACK_TYPE_SPELLS then
         // Calculate expected damage and crit threshold
         set expectedDamage = GetExpectedDamage(source)
         set critThreshold = expectedDamage * CRIT_THRESHOLD_MULTIPLIER
@@ -163,7 +168,7 @@ private function ThreatDamagedEvent takes nothing returns nothing
             set isCrit = true
             
             // Display critical hit indicator
-            call ShowCriticalHitText(target, actualDamage)
+            call ShowCriticalHitText(source, target, actualDamage)
             
             // Additional crit effects can be added here
             // Example: Special sound effect
