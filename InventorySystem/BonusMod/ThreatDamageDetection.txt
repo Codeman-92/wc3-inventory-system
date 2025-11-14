@@ -1,0 +1,216 @@
+//TESH.scrollpos=0
+//TESH.alwaysfold=0
+library ThreatDamageDetection
+
+//==============================================================================
+// Threat and Damage Detection System
+//==============================================================================
+// This system handles combat damage events and determines critical hits
+// by comparing actual damage dealt to expected base damage.
+//
+// Key Features:
+// - Pre-damage event (EVENT_UNIT_DAMAGING): Handles dodge/parry/block/armor
+// - Post-damage event (EVENT_UNIT_DAMAGED): Detects true critical hits
+// - Dynamic threshold: 1.75x expected damage (between normal max and crit min)
+//==============================================================================
+
+globals
+    // Crit detection threshold multiplier
+    // Set at 1.75x to sit between max normal roll (~1.6x) and min crit (~2.0x)
+    private constant real CRIT_THRESHOLD_MULTIPLIER = 1.75
+    
+    // Critical hit multiplier for damage calculation
+    private constant real CRIT_DAMAGE_MULTIPLIER = 2.0
+    
+    // Trigger handles for damage events
+    private trigger damagingTrigger = null
+    private trigger damagedTrigger = null
+endglobals
+
+//==============================================================================
+// Helper Functions
+//==============================================================================
+
+// Get the base damage of a unit (average of min and max damage)
+private function GetUnitBaseDamage takes unit u returns real
+    local real minDamage = BlzGetUnitBaseDamage(u, 0)
+    local real maxDamage = minDamage + BlzGetUnitDiceNumber(u, 0) * BlzGetUnitDiceSides(u, 0)
+    return (minDamage + maxDamage) / 2.0
+endfunction
+
+// Get attack power bonus from unit stats (strength/agility/intelligence)
+private function GetUnitAttackPowerBonus takes unit u returns real
+    local real bonus = 0.0
+    local integer primaryAttr
+    
+    if IsUnitType(u, UNIT_TYPE_HERO) then
+        // Get primary attribute for the hero
+        set primaryAttr = BlzGetUnitIntegerField(u, UNIT_IF_PRIMARY_ATTRIBUTE)
+        
+        // Add damage bonus based on primary attribute
+        // In WC3: Strength heroes get +1 damage per STR, Agility per AGI, Intelligence per INT
+        if primaryAttr == 1 then
+            // Strength primary
+            set bonus = GetHeroStr(u, true)
+        elseif primaryAttr == 2 then
+            // Agility primary
+            set bonus = GetHeroAgi(u, true)
+        elseif primaryAttr == 3 then
+            // Intelligence primary
+            set bonus = GetHeroInt(u, true)
+        endif
+    endif
+    
+    return bonus
+endfunction
+
+// Calculate expected damage (base damage + AP bonus)
+private function GetExpectedDamage takes unit u returns real
+    local real baseDamage = GetUnitBaseDamage(u)
+    local real apBonus = GetUnitAttackPowerBonus(u)
+    return baseDamage + apBonus
+endfunction
+
+// Display floating text for critical hit
+private function ShowCriticalHitText takes unit target, real damage returns nothing
+    local texttag tt = CreateTextTag()
+    local string damageText = I2S(R2I(damage)) + "!"
+    
+    if tt != null then
+        call SetTextTagText(tt, damageText, 0.024)
+        call SetTextTagPos(tt, GetUnitX(target), GetUnitY(target), 0.0)
+        call SetTextTagColor(tt, 255, 255, 0, 255) // Yellow color for crits
+        call SetTextTagVelocity(tt, 0.0, 0.03)
+        call SetTextTagPermanent(tt, false)
+        call SetTextTagLifespan(tt, 2.0)
+        call SetTextTagFadepoint(tt, 1.0)
+        
+        // Only show to local player for performance
+        if GetLocalPlayer() == GetOwningPlayer(target) then
+            call SetTextTagVisibility(tt, true)
+        else
+            call SetTextTagVisibility(tt, false)
+        endif
+    endif
+    
+    set tt = null
+endfunction
+
+//==============================================================================
+// Pre-Damage Event Handler (EVENT_UNIT_DAMAGING)
+//==============================================================================
+// Handles dodge, parry, block, and armor calculations BEFORE damage is applied
+// NO CRIT DETECTION HERE - WC3's dice rolls happen after this event
+//==============================================================================
+private function ResolveCombatAttack takes nothing returns nothing
+    local unit source = GetEventDamageSource()
+    local unit target = BlzGetEventDamageTarget()
+    local real damage = GetEventDamage()
+    
+    // Handle dodge/parry/block mechanics here
+    // These should be calculated BEFORE damage is applied
+    
+    // Example: Dodge chance
+    // if GetRandomReal(0, 100) < GetUnitDodgeChance(target) then
+    //     call BlzSetEventDamage(0.0)
+    //     // Show "Dodge" text
+    //     return
+    // endif
+    
+    // Example: Parry chance
+    // if GetRandomReal(0, 100) < GetUnitParryChance(target) then
+    //     call BlzSetEventDamage(damage * 0.5) // Reduce damage by 50%
+    //     // Show "Parry" text
+    //     return
+    // endif
+    
+    // Example: Block calculation
+    // if GetRandomReal(0, 100) < GetUnitBlockChance(target) then
+    //     call BlzSetEventDamage(damage - GetUnitBlockAmount(target))
+    //     // Show "Block" text
+    //     return
+    // endif
+    
+    // Armor reduction is handled by WC3 automatically
+    // Additional custom armor calculations can be added here
+    
+    set source = null
+    set target = null
+endfunction
+
+//==============================================================================
+// Post-Damage Event Handler (EVENT_UNIT_DAMAGED)
+//==============================================================================
+// Detects critical hits by comparing actual damage to expected damage threshold
+// This runs AFTER WC3's dice rolls, so we can accurately identify crits
+//==============================================================================
+private function ThreatDamagedEvent takes nothing returns nothing
+    local unit source = GetEventDamageSource()
+    local unit target = BlzGetEventDamageTarget()
+    local real actualDamage = GetEventDamage()
+    local real expectedDamage
+    local real critThreshold
+    local boolean isCrit = false
+    
+    // Only process attack damage, not spell damage
+    if BlzGetEventDamageType() == DAMAGE_TYPE_NORMAL then
+        // Calculate expected damage and crit threshold
+        set expectedDamage = GetExpectedDamage(source)
+        set critThreshold = expectedDamage * CRIT_THRESHOLD_MULTIPLIER
+        
+        // Check if actual damage exceeds crit threshold
+        if actualDamage >= critThreshold then
+            set isCrit = true
+            
+            // Display critical hit indicator
+            call ShowCriticalHitText(target, actualDamage)
+            
+            // Additional crit effects can be added here
+            // Example: Special sound effect
+            // if GetLocalPlayer() == GetOwningPlayer(source) then
+            //     call StartSound(critSound)
+            // endif
+        endif
+    endif
+    
+    // Handle threat calculations here if needed
+    // Example: Increase threat on target
+    // if isCrit then
+    //     call AddThreat(source, target, actualDamage * 1.5)
+    // else
+    //     call AddThreat(source, target, actualDamage)
+    // endif
+    
+    set source = null
+    set target = null
+endfunction
+
+//==============================================================================
+// Initialization
+//==============================================================================
+private function Init takes nothing returns nothing
+    // Register pre-damage event (EVENT_UNIT_DAMAGING)
+    set damagingTrigger = CreateTrigger()
+    call TriggerRegisterAnyUnitEventBJ(damagingTrigger, EVENT_PLAYER_UNIT_DAMAGING)
+    call TriggerAddAction(damagingTrigger, function ResolveCombatAttack)
+    
+    // Register post-damage event (EVENT_UNIT_DAMAGED)
+    set damagedTrigger = CreateTrigger()
+    call TriggerRegisterAnyUnitEventBJ(damagedTrigger, EVENT_PLAYER_UNIT_DAMAGED)
+    call TriggerAddAction(damagedTrigger, function ThreatDamagedEvent)
+endfunction
+
+//==============================================================================
+// Module for initialization
+//==============================================================================
+private module ThreatDamageInit
+    private static method onInit takes nothing returns nothing
+        call Init()
+    endmethod
+endmodule
+
+private struct ThreatDamageStruct extends array
+    implement ThreatDamageInit
+endstruct
+
+endlibrary
